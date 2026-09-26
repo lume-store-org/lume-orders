@@ -1,18 +1,15 @@
 import os
+
 import mysql.connector
 
+
 def get_db_connection():
-    """Estabelece e retorna uma conexão com o banco de dados MySQL"""
-    db_host = os.environ.get('DB_HOST', 'mysql-pedidos')
-    db_name = os.environ.get('DB_NAME', 'pedidos_db')
-    db_user = os.environ.get('DB_USER', 'root')
-    db_password = os.environ.get('DB_PASSWORD', 'root')
-    
-    conn = mysql.connector.connect(
-        host=db_host,
-        database=db_name,
-        user=db_user,
-        password=db_password
+    """Conexão com o MySQL do serviço. Credenciais vêm só das variáveis de ambiente."""
+    return mysql.connector.connect(
+        host=os.environ['DB_HOST'],
+        database=os.environ['DB_NAME'],
+        user=os.environ['DB_USER'],
+        password=os.environ['DB_PASSWORD'],
+        charset='utf8mb4',
+        collation='utf8mb4_unicode_ci',
     )
-    
-    return conn
