@@ -4,7 +4,7 @@ import mysql.connector
 
 
 def get_db_connection():
-    """Conexão com o MySQL do serviço. Credenciais vêm só das variáveis de ambiente."""
+    """MySQL connection for this service. Credentials come only from environment variables."""
     return mysql.connector.connect(
         host=os.environ['DB_HOST'],
         database=os.environ['DB_NAME'],
