@@ -6,160 +6,160 @@ from flask import jsonify, request
 
 from database import get_db_connection
 
-ITENS_SERVICE_URL = os.environ.get('ITENS_SERVICE_URL', 'http://service-itens:5001')
-STATUS = ['pendente', 'pago', 'enviado', 'entregue', 'cancelado']
-CANCELAVEIS = {'pendente', 'pago'}
+CATALOG_SERVICE_URL = os.environ.get('CATALOG_SERVICE_URL', 'http://lume-catalog:5001')
+STATUSES = ['pending', 'paid', 'shipped', 'delivered', 'cancelled']
+CANCELLABLE = {'pending', 'paid'}
 
 
-def usuario_atual():
-    """Usuário autenticado, repassado pelo API Gateway nos headers internos."""
-    uid = request.headers.get('X-Usuario-Id')
-    return (int(uid) if uid else None), request.headers.get('X-Usuario-Admin') == '1'
+def current_user():
+    """Authenticated user, forwarded by the API Gateway in internal headers."""
+    user_id = request.headers.get('X-User-Id')
+    return (int(user_id) if user_id else None), request.headers.get('X-User-Admin') == '1'
 
 
-def carregar_pedidos(cur, where='', params=()):
+def load_orders(cur, where='', params=()):
     cur.execute(
-        f'SELECT id, usuario_id, data, status, endereco_entrega, valor_total FROM pedidos {where} ORDER BY data DESC, id DESC',
+        f'SELECT id, user_id, created_at, status, shipping_address, total FROM orders {where} ORDER BY created_at DESC, id DESC',
         params,
     )
-    pedidos = []
-    for p in cur.fetchall():
+    orders = []
+    for o in cur.fetchall():
         cur.execute(
-            'SELECT item_id, nome, imagem, quantidade, preco_unitario FROM itens_pedido WHERE pedido_id = %s ORDER BY id',
-            (p[0],),
+            'SELECT product_id, name, image, quantity, unit_price FROM order_items WHERE order_id = %s ORDER BY id',
+            (o[0],),
         )
-        itens = [
-            {'item_id': i[0], 'nome': i[1], 'imagem': i[2], 'quantidade': i[3], 'preco_unitario': float(i[4])}
+        items = [
+            {'product_id': i[0], 'name': i[1], 'image': i[2], 'quantity': i[3], 'unit_price': float(i[4])}
             for i in cur.fetchall()
         ]
-        pedidos.append({
-            'id': p[0],
-            'usuario_id': p[1],
-            'data': p[2].isoformat() if isinstance(p[2], datetime) else p[2],
-            'status': p[3],
-            'endereco_entrega': p[4],
-            'valor_total': float(p[5]),
-            'itens': itens,
+        orders.append({
+            'id': o[0],
+            'user_id': o[1],
+            'created_at': o[2].isoformat() if isinstance(o[2], datetime) else o[2],
+            'status': o[3],
+            'shipping_address': o[4],
+            'total': float(o[5]),
+            'items': items,
         })
-    return pedidos
+    return orders
 
 
-def devolver_estoque(itens):
+def release_stock(items):
     try:
-        requests.post(f'{ITENS_SERVICE_URL}/interno/estoque/devolver', json={'itens': itens}, timeout=5)
+        requests.post(f'{CATALOG_SERVICE_URL}/internal/stock/release', json={'items': items}, timeout=5)
     except requests.exceptions.RequestException:
         pass
 
 
 def register_routes(app):
-    @app.route('/pedidos', methods=['GET'])
-    def listar_pedidos():
-        uid, admin = usuario_atual()
-        if uid is None:
-            return jsonify({"erro": "Não autenticado"}), 401
+    @app.route('/orders', methods=['GET'])
+    def list_orders():
+        user_id, admin = current_user()
+        if user_id is None:
+            return jsonify({'error': 'Não autenticado'}), 401
         conn = get_db_connection()
         cur = conn.cursor()
-        # Admin vê todos; cliente vê só os próprios
-        pedidos = carregar_pedidos(cur) if admin else carregar_pedidos(cur, 'WHERE usuario_id = %s', (uid,))
+        # Admins see every order; customers only their own
+        orders = load_orders(cur) if admin else load_orders(cur, 'WHERE user_id = %s', (user_id,))
         cur.close()
         conn.close()
-        return jsonify({"pedidos": pedidos})
+        return jsonify({'orders': orders})
 
-    @app.route('/pedidos/<int:id>', methods=['GET'])
-    def obter_pedido(id):
-        uid, admin = usuario_atual()
+    @app.route('/orders/<int:order_id>', methods=['GET'])
+    def get_order(order_id):
+        user_id, admin = current_user()
         conn = get_db_connection()
         cur = conn.cursor()
-        pedidos = carregar_pedidos(cur, 'WHERE id = %s', (id,))
+        orders = load_orders(cur, 'WHERE id = %s', (order_id,))
         cur.close()
         conn.close()
-        if not pedidos or not (admin or pedidos[0]['usuario_id'] == uid):
-            return jsonify({"erro": "Pedido não encontrado"}), 404
-        return jsonify(pedidos[0])
+        if not orders or not (admin or orders[0]['user_id'] == user_id):
+            return jsonify({'error': 'Pedido não encontrado'}), 404
+        return jsonify(orders[0])
 
-    @app.route('/pedidos', methods=['POST'])
-    def criar_pedido():
-        uid, _ = usuario_atual()
-        if uid is None:
-            return jsonify({"erro": "Não autenticado"}), 401
-        dados = request.get_json(silent=True) or {}
-        linhas = [
-            {'item_id': i.get('item_id'), 'quantidade': i.get('quantidade', 1)}
-            for i in dados.get('itens', []) if isinstance(i, dict)
+    @app.route('/orders', methods=['POST'])
+    def create_order():
+        user_id, _ = current_user()
+        if user_id is None:
+            return jsonify({'error': 'Não autenticado'}), 401
+        data = request.get_json(silent=True) or {}
+        lines = [
+            {'product_id': i.get('product_id'), 'quantity': i.get('quantity', 1)}
+            for i in data.get('items', []) if isinstance(i, dict)
         ]
-        if not linhas:
-            return jsonify({"erro": "O pedido deve conter pelo menos um item"}), 400
+        if not lines:
+            return jsonify({'error': 'O pedido deve ter pelo menos um produto'}), 400
 
-        # Reserva o estoque e obtém os preços do catálogo (o cliente não define preço)
+        # Reserve stock and take prices from the catalog (the client never sets prices)
         try:
-            resp = requests.post(f'{ITENS_SERVICE_URL}/interno/estoque/reservar', json={'itens': linhas}, timeout=5)
+            resp = requests.post(f'{CATALOG_SERVICE_URL}/internal/stock/reserve', json={'items': lines}, timeout=5)
         except requests.exceptions.RequestException:
-            return jsonify({"erro": "Serviço de itens indisponível"}), 503
+            return jsonify({'error': 'Catálogo indisponível'}), 503
         if resp.status_code != 200:
             return jsonify(resp.json()), resp.status_code
-        itens = resp.json()['itens']
-        total = round(sum(i['quantidade'] * i['preco_unitario'] for i in itens), 2)
+        items = resp.json()['items']
+        total = round(sum(i['quantity'] * i['unit_price'] for i in items), 2)
 
         conn = get_db_connection()
         cur = conn.cursor()
         try:
             cur.execute(
-                'INSERT INTO pedidos (usuario_id, endereco_entrega, valor_total) VALUES (%s, %s, %s)',
-                (uid, dados.get('endereco_entrega', ''), total),
+                'INSERT INTO orders (user_id, shipping_address, total) VALUES (%s, %s, %s)',
+                (user_id, data.get('shipping_address', ''), total),
             )
-            pedido_id = cur.lastrowid
+            order_id = cur.lastrowid
             cur.executemany(
-                'INSERT INTO itens_pedido (pedido_id, item_id, nome, imagem, quantidade, preco_unitario) VALUES (%s, %s, %s, %s, %s, %s)',
-                [(pedido_id, i['item_id'], i['nome'], i['imagem'], i['quantidade'], i['preco_unitario']) for i in itens],
+                'INSERT INTO order_items (order_id, product_id, name, image, quantity, unit_price) VALUES (%s, %s, %s, %s, %s, %s)',
+                [(order_id, i['product_id'], i['name'], i['image'], i['quantity'], i['unit_price']) for i in items],
             )
             conn.commit()
-            return jsonify(carregar_pedidos(cur, 'WHERE id = %s', (pedido_id,))[0]), 201
+            return jsonify(load_orders(cur, 'WHERE id = %s', (order_id,))[0]), 201
         except Exception:
             conn.rollback()
-            devolver_estoque(itens)
-            return jsonify({"erro": "Erro ao registrar o pedido"}), 500
+            release_stock(items)
+            return jsonify({'error': 'Não foi possível registrar o pedido'}), 500
         finally:
             cur.close()
             conn.close()
 
-    @app.route('/pedidos/<int:id>/status', methods=['PATCH'])
-    def atualizar_status_pedido(id):
-        if not usuario_atual()[1]:
-            return jsonify({"erro": "Apenas administradores"}), 403
-        novo_status = (request.get_json(silent=True) or {}).get('status')
-        if novo_status not in STATUS:
-            return jsonify({"erro": f"Status deve ser um de: {', '.join(STATUS)}"}), 400
+    @app.route('/orders/<int:order_id>/status', methods=['PATCH'])
+    def update_status(order_id):
+        if not current_user()[1]:
+            return jsonify({'error': 'Apenas administradores'}), 403
+        status = (request.get_json(silent=True) or {}).get('status')
+        if status not in STATUSES:
+            return jsonify({'error': f"Status deve ser um de: {', '.join(STATUSES)}"}), 400
 
         conn = get_db_connection()
         cur = conn.cursor()
         try:
-            pedidos = carregar_pedidos(cur, 'WHERE id = %s', (id,))
-            if not pedidos:
-                return jsonify({"erro": "Pedido não encontrado"}), 404
-            if novo_status == 'cancelado' and pedidos[0]['status'] != 'cancelado':
-                devolver_estoque(pedidos[0]['itens'])
-            cur.execute('UPDATE pedidos SET status = %s WHERE id = %s', (novo_status, id))
+            orders = load_orders(cur, 'WHERE id = %s', (order_id,))
+            if not orders:
+                return jsonify({'error': 'Pedido não encontrado'}), 404
+            if status == 'cancelled' and orders[0]['status'] != 'cancelled':
+                release_stock(orders[0]['items'])
+            cur.execute('UPDATE orders SET status = %s WHERE id = %s', (status, order_id))
             conn.commit()
-            return jsonify(carregar_pedidos(cur, 'WHERE id = %s', (id,))[0])
+            return jsonify(load_orders(cur, 'WHERE id = %s', (order_id,))[0])
         finally:
             cur.close()
             conn.close()
 
-    @app.route('/pedidos/<int:id>', methods=['DELETE'])
-    def cancelar_pedido(id):
-        uid, admin = usuario_atual()
+    @app.route('/orders/<int:order_id>', methods=['DELETE'])
+    def cancel_order(order_id):
+        user_id, admin = current_user()
         conn = get_db_connection()
         cur = conn.cursor()
         try:
-            pedidos = carregar_pedidos(cur, 'WHERE id = %s', (id,))
-            if not pedidos or not (admin or pedidos[0]['usuario_id'] == uid):
-                return jsonify({"erro": "Pedido não encontrado"}), 404
-            if pedidos[0]['status'] not in CANCELAVEIS:
-                return jsonify({"erro": "Só é possível cancelar pedidos pendentes ou pagos"}), 409
-            cur.execute("UPDATE pedidos SET status = 'cancelado' WHERE id = %s", (id,))
+            orders = load_orders(cur, 'WHERE id = %s', (order_id,))
+            if not orders or not (admin or orders[0]['user_id'] == user_id):
+                return jsonify({'error': 'Pedido não encontrado'}), 404
+            if orders[0]['status'] not in CANCELLABLE:
+                return jsonify({'error': 'Só é possível cancelar pedidos pendentes ou pagos'}), 409
+            cur.execute("UPDATE orders SET status = 'cancelled' WHERE id = %s", (order_id,))
             conn.commit()
-            devolver_estoque(pedidos[0]['itens'])
-            return jsonify(carregar_pedidos(cur, 'WHERE id = %s', (id,))[0])
+            release_stock(orders[0]['items'])
+            return jsonify(load_orders(cur, 'WHERE id = %s', (order_id,))[0])
         finally:
             cur.close()
             conn.close()
@@ -170,10 +170,10 @@ def register_routes(app):
             conn = get_db_connection()
             conn.close()
         except Exception:
-            return jsonify({"status": "erro", "database": "disconnected"}), 500
+            return jsonify({'status': 'error', 'database': 'disconnected'}), 500
         try:
-            itens = requests.get(f'{ITENS_SERVICE_URL}/health', timeout=2)
-            itens_status = 'online' if itens.status_code == 200 else 'erro'
+            catalog = requests.get(f'{CATALOG_SERVICE_URL}/health', timeout=2)
+            catalog_status = 'online' if catalog.status_code == 200 else 'error'
         except requests.exceptions.RequestException:
-            itens_status = 'offline'
-        return jsonify({"status": "ok", "database": "connected", "dependencias": {"itens_service": itens_status}}), 200
+            catalog_status = 'offline'
+        return jsonify({'status': 'ok', 'database': 'connected', 'dependencies': {'catalog': catalog_status}}), 200
