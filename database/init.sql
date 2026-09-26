@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS itens_pedido (
     FOREIGN KEY (pedido_id) REFERENCES pedidos(id) ON DELETE CASCADE
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- Pedido de exemplo da conta cliente@loja.dev (usuário 2)
+-- Pedido de exemplo da conta cliente@lumestore.dev (usuário 2)
 INSERT INTO pedidos (id, usuario_id, data, status, endereco_entrega, valor_total) VALUES
     (1, 2, '2025-04-20 10:30:00', 'entregue', 'Rua de Teste, 123 - São Paulo/SP', 5449.80);
 
