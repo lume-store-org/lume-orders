@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="Lume Store" width="240" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg" />
+    <img src="docs/logo.svg" alt="Lume Store" width="240" />
+  </picture>
 </p>
 
 <h1 align="center">
@@ -7,7 +10,7 @@
 </h1>
 
 <p align="center">
-  <img src="docs/arch.gif" alt="Arquitetura da Lume Store com o microserviço de pedidos" />
+  <img src="docs/api-demo.gif" alt="Rotas de pedidos no Swagger: criar, listar e cancelar um pedido" />
 </p>
 
 <p align="center">
@@ -21,6 +24,12 @@
 Microserviço de **pedidos** da Lume Store. Registra as compras, mantém o histórico de cada cliente e controla o ciclo de vida do pedido (`pending` → `paid` → `shipped` → `delivered`, ou `cancelled`). Para fechar um pedido, pede ao [lume-catalog](https://github.com/lume-store-org/lume-catalog) que reserve o estoque e informe os preços: **o cliente nunca define o preço**.
 
 Tem o próprio banco MySQL (`orders_db`) e recebe o usuário autenticado do [lume-gateway](https://github.com/lume-store-org/lume-gateway) pelos headers `X-User-Id` e `X-User-Admin`.
+
+## Arquitetura
+
+<p align="center">
+  <img src="docs/arch.gif" alt="Arquitetura do lume-orders: chamado pelo gateway, com o banco orders_db e dependência do lume-catalog" />
+</p>
 
 ## O que foi construído
 
